@@ -15,16 +15,18 @@ if not GOOGLE_API_KEY:
 
 genai.configure(api_key=GOOGLE_API_KEY)
 
+from pydantic import PrivateAttr
+
 class GeminiLLM(LLM):
-    model: str = "gemini-1.5-flash"
+    _model: str = PrivateAttr(default="gemini-1.5-flash")
 
     @property
     def _llm_type(self) -> str:
         return "gemini-llm"
 
-    def _call(self, prompt: str, stop: Optional[List[str]] = None) -> str:
+    def _call(self, prompt: str, stop=None):
         try:
-            response = genai.GenerativeModel(self.model).generate_content(prompt)
+            response = genai.GenerativeModel(self._model).generate_content(prompt)
             return response.text
         except Exception as e:
             return f"Error from Gemini API: {e}"
@@ -78,7 +80,7 @@ if btn and query:
         prompt += "Relevant chat memory (previous Q/A pairs):\n" + context_text + "\n\n"
     prompt += "User question:\n" + query + "\n\nAnswer:"
 
-    llm = GeminiLLM(model="gemini-1.5-flash")
+    llm = GeminiLLM()
     with st.spinner("Generating answer from Gemini..."):
         try:
             answer = llm(prompt)
