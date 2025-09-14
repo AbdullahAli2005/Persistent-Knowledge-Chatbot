@@ -6,8 +6,7 @@ __pycache__/
 
 # C extensions
 *.so
-data
-data/
+
 
 chroma_persist
 chroma_persist/
