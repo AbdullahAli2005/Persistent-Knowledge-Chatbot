@@ -78,7 +78,7 @@ if btn and query:
         prompt += "Relevant chat memory (previous Q/A pairs):\n" + context_text + "\n\n"
     prompt += "User question:\n" + query + "\n\nAnswer:"
 
-    llm = GeminiLLM()
+    llm = GeminiLLM(model="gemini-1.5-flash")
     with st.spinner("Generating answer from Gemini..."):
         try:
             answer = llm(prompt)
