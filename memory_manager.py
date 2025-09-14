@@ -1,188 +1,85 @@
 import os
 import json
-import hashlib
-import math
-from typing import List, Dict, Any, Optional
-import chromadb
-from chromadb.utils import embedding_functions
-
+import faiss
+import numpy as np
+from typing import List, Dict, Any
 from dotenv import load_dotenv
+import google.generativeai as genai
 
+# Load env
 load_dotenv()
 
-# try:
-#     import chromadb
-#     from chromadb.utils import embedding_functions
-# except Exception as e:
-#     raise ImportError("ChromaDB is required for this module. Please install it via 'pip install chromadb'") from e
+CHAT_MEMORY_PATH = os.getenv("CHAT_MEMORY_PATH", "data/chat_memory.json")
+EMBED_DIM = 768  # Gemini embedding dimension
 
-# Config defaults
-DEFAULT_CHAT_MEMORY_PATH = os.getenv("CHAT_MEMORY_PATH", "data/chat_memory.json")
-CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "data/chroma")  # default to a folder
-
-# Embedding dimension used for pseudo embeddings
-EMBED_DIM = 128
+# Configure Gemini Embedding
+genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+embed_model = "models/embedding-001"
 
 
-def _text_to_embedding(text: str, dim: int = EMBED_DIM) -> List[float]:
-    """
-    Produce a deterministic pseudo-embedding from text using hashing.
-    Not semantically strong like real embeddings, but deterministic and
-    adequate for demonstration and reindexing.
-    """
-    sha = hashlib.sha256(text.encode("utf-8")).digest()
-    md5 = hashlib.md5(text.encode("utf-8")).digest()
-    combined = sha + md5  # 48 bytes
-    floats = []
-    for i in range(dim):
-        b = combined[i % len(combined)]
-        val = (b / 255.0) * 2.0 - 1.0  # normalize -1..1
-        floats.append(math.sin(val * (i + 1)))
-    return floats
+def _text_to_embedding(text: str) -> np.ndarray:
+    """Convert text into a Gemini embedding vector."""
+    resp = genai.embed_content(model=embed_model, content=text)
+    return np.array(resp["embedding"], dtype="float32")
 
 
 class MemoryManager:
-    def __init__(
-        self,
-        chat_memory_path: str = DEFAULT_CHAT_MEMORY_PATH,
-        chroma_persist_dir: Optional[str] = CHROMA_PERSIST_DIR,
-    ):
-        self.chat_memory_path = chat_memory_path
-        self.persist_dir = chroma_persist_dir or "data/chroma"
+    def __init__(self):
+        os.makedirs(os.path.dirname(CHAT_MEMORY_PATH), exist_ok=True)
 
-        # ensure dirs
-        self.ensure_data_dir()
-        os.makedirs(self.persist_dir, exist_ok=True)
+        # Initialize FAISS index
+        self.index = faiss.IndexFlatL2(EMBED_DIM)
+        self.vectors: List[np.ndarray] = []
+        self.metadata: List[Dict[str, Any]] = []
 
-        # Persistent Chroma client
-        self.client = chromadb.PersistentClient(path=self.persist_dir)
-
-        # Default embedding function (can be replaced with OpenAI/Gemini later)
-        self.embedding_fn = embedding_functions.DefaultEmbeddingFunction()
-
-        self.collection_name = "chat_memory"
-        self.collection = self._get_or_create_collection()
-
-        # On init, reindex JSON
+        # Load and reindex stored Q&A
         self.reindex_from_json()
 
-    def ensure_data_dir(self):
-        folder = os.path.dirname(self.chat_memory_path)
-        if folder and not os.path.exists(folder):
-            os.makedirs(folder, exist_ok=True)
-
-    def _get_or_create_collection(self):
-        try:
-            return self.client.get_or_create_collection(
-                name=self.collection_name,
-                embedding_function=self.embedding_fn,
-            )
-        except Exception:
-            # last resort
-            return self.client.create_collection(
-                name=self.collection_name,
-                embedding_function=self.embedding_fn,
-            )
-
     def _read_json(self) -> List[Dict[str, str]]:
-        if not os.path.exists(self.chat_memory_path):
+        if not os.path.exists(CHAT_MEMORY_PATH):
             return []
         try:
-            with open(self.chat_memory_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return data if isinstance(data, list) else []
+            with open(CHAT_MEMORY_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
         except Exception:
             return []
 
-    def _write_json(self, arr: List[Dict[str, str]]):
-        with open(self.chat_memory_path, "w", encoding="utf-8") as f:
-            json.dump(arr, f, indent=2, ensure_ascii=False)
-
-    def get_all_pairs(self) -> List[Dict[str, str]]:
-        """Returns list of {"question": str, "answer": str}"""
-        return self._read_json()
-
-    def append_pair(self, question: str, answer: str):
-        arr = self._read_json()
-        arr.append({"question": question, "answer": answer})
-        self._write_json(arr)
-        # reindex only new item
-        self._add_to_chroma(len(arr) - 1, question, answer)
-
-    def reindex_from_json(self):
-        """Rebuild the entire collection from JSON file"""
-        pairs = self._read_json()
-        try:
-            # clear existing collection
-            self.client.delete_collection(self.collection_name)
-            self.collection = self._get_or_create_collection()
-        except Exception:
-            pass
-
-        if not pairs:
-            return
-
-        ids, documents, metadatas, embeddings = [], [], [], []
-        for idx, p in enumerate(pairs):
-            q, a = p.get("question", ""), p.get("answer", "")
-            doc_text = f"Q: {q}\nA: {a}"
-            ids.append(str(idx))
-            documents.append(doc_text)
-            metadatas.append({"question": q, "answer": a})
-            embeddings.append(_text_to_embedding(doc_text))
-
-        try:
-            self.collection.add(
-                ids=ids,
-                documents=documents,
-                metadatas=metadatas,
-                embeddings=embeddings,
-            )
-        except Exception as e:
-            print("Warning: Chroma add failed during reindex.", e)
+    def _write_json(self, data: List[Dict[str, str]]):
+        with open(CHAT_MEMORY_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
 
     def _add_to_chroma(self, idx: int, question: str, answer: str):
+        """Index a Q&A pair into FAISS (kept function name for compatibility)."""
         doc_text = f"Q: {question}\nA: {answer}"
-        try:
-            self.collection.add(
-                ids=[str(idx)],
-                documents=[doc_text],
-                metadatas=[{"question": question, "answer": answer}],
-                embeddings=[_text_to_embedding(doc_text)],
-            )
-        except Exception as e:
-            print("Warning: Chroma add for single item failed.", e)
+        emb = np.array([_text_to_embedding(doc_text)], dtype="float32")
+        self.index.add(emb)
+        self.vectors.append(emb)
+        self.metadata.append({"question": question, "answer": answer})
+
+    def append_pair(self, question: str, answer: str):
+        """Save new Q&A pair into JSON and FAISS."""
+        pairs = self._read_json()
+        pairs.append({"question": question, "answer": answer})
+        self._write_json(pairs)
+        self._add_to_chroma(len(pairs) - 1, question, answer)
+
+    def reindex_from_json(self):
+        """Rebuild FAISS index from stored JSON Q&A."""
+        pairs = self._read_json()
+        self.index = faiss.IndexFlatL2(EMBED_DIM)
+        self.vectors = []
+        self.metadata = []
+
+        for idx, p in enumerate(pairs):
+            q, a = p.get("question", ""), p.get("answer", "")
+            self._add_to_chroma(idx, q, a)
 
     def query_similar(self, query_text: str, n_results: int = 3) -> List[Dict[str, Any]]:
-        """
-        Query Chroma for top-n similar Q+A entries.
-        Fallback: return last n from JSON.
-        """
-        emb = _text_to_embedding(query_text)
-        try:
-            res = self.collection.query(
-                query_embeddings=[emb],
-                n_results=n_results,
-                include=["metadatas", "documents", "distances", "ids"],
-            )
-            results = []
-            docs = res.get("documents", [[]])[0]
-            metas = res.get("metadatas", [[]])[0]
-            dists = res.get("distances", [[]])[0] if "distances" in res else []
-            ids = res.get("ids", [[]])[0] if "ids" in res else []
+        """Find most similar Q&A pairs using FAISS nearest neighbors."""
+        emb = np.array([_text_to_embedding(query_text)], dtype="float32")
 
-            for doc, meta, dist, id_ in zip(docs, metas, dists, ids):
-                results.append(
-                    {
-                        "document": doc,
-                        "question": meta.get("question") if meta else None,
-                        "answer": meta.get("answer") if meta else None,
-                        "distance": dist,
-                        "id": id_,
-                    }
-                )
-            return results
-        except Exception:
+        if self.index.ntotal == 0:
+            # If no data, fallback to last N Q&A from JSON
             pairs = self._read_json()[-n_results:]
             return [
                 {
@@ -192,3 +89,19 @@ class MemoryManager:
                 }
                 for p in reversed(pairs)
             ]
+
+        distances, indices = self.index.search(emb, n_results)
+        results = []
+        for dist, idx in zip(distances[0], indices[0]):
+            if idx < len(self.metadata):
+                meta = self.metadata[idx]
+                results.append(
+                    {
+                        "document": f"Q: {meta['question']}\nA: {meta['answer']}",
+                        "question": meta["question"],
+                        "answer": meta["answer"],
+                        "distance": float(dist),
+                        "id": idx,
+                    }
+                )
+        return results
