@@ -3,7 +3,7 @@ import json
 import faiss
 import numpy as np
 from typing import List, Dict
-from google import genai
+import google.generativeai as genai
 
 
 CHAT_MEMORY_PATH = "data/chat_memory.json"
