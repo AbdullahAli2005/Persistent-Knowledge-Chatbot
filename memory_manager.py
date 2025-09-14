@@ -2,106 +2,100 @@ import os
 import json
 import faiss
 import numpy as np
-from typing import List, Dict, Any
-from dotenv import load_dotenv
-import google.generativeai as genai
-
-# Load env
-load_dotenv()
-
-CHAT_MEMORY_PATH = os.getenv("CHAT_MEMORY_PATH", "data/chat_memory.json")
-EMBED_DIM = 768  # Gemini embedding dimension
-
-# Configure Gemini Embedding
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-embed_model = "models/embedding-001"
+from typing import List, Dict
+from google import genai
 
 
-def _text_to_embedding(text: str) -> np.ndarray:
-    """Convert text into a Gemini embedding vector."""
-    resp = genai.embed_content(model=embed_model, content=text)
-    return np.array(resp["embedding"], dtype="float32")
+CHAT_MEMORY_PATH = "data/chat_memory.json"
+
+client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
+
+def _text_to_embedding(text: str) -> List[float]:
+    """Convert text into embedding using Gemini 1.5 Flash."""
+    response = client.models.embed_content(
+        model="models/embedding-001",
+        input=text,
+    )
+    return response.embeddings[0].values
 
 
 class MemoryManager:
     def __init__(self):
-        os.makedirs(os.path.dirname(CHAT_MEMORY_PATH), exist_ok=True)
-
-        # Initialize FAISS index
-        self.index = faiss.IndexFlatL2(EMBED_DIM)
-        self.vectors: List[np.ndarray] = []
-        self.metadata: List[Dict[str, Any]] = []
-
-        # Load and reindex stored Q&A
+        self.index = None
+        self.vectors = []
+        self.metadata = []
         self.reindex_from_json()
 
-    def _read_json(self) -> List[Dict[str, str]]:
-        if not os.path.exists(CHAT_MEMORY_PATH):
-            return []
-        try:
+    def _read_json(self) -> List[Dict]:
+        if os.path.exists(CHAT_MEMORY_PATH):
             with open(CHAT_MEMORY_PATH, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except Exception:
-            return []
+        return []
 
-    def _write_json(self, data: List[Dict[str, str]]):
+    def _write_json(self, data: List[Dict]):
+        os.makedirs(os.path.dirname(CHAT_MEMORY_PATH), exist_ok=True)
         with open(CHAT_MEMORY_PATH, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+            json.dump(data, f, indent=2, ensure_ascii=False)
 
-    def _add_to_chroma(self, idx: int, question: str, answer: str):
-        """Index a Q&A pair into FAISS (kept function name for compatibility)."""
-        doc_text = f"Q: {question}\nA: {answer}"
-        emb = np.array([_text_to_embedding(doc_text)], dtype="float32")
+    def _add_to_chroma(self, idx: int, question: str, answer: str, embedding=None):
+        """Add vector + metadata into FAISS index."""
+        if embedding is None:
+            doc_text = f"Q: {question}\nA: {answer}"
+            embedding = _text_to_embedding(doc_text)
+
+        emb = np.array([embedding], dtype="float32")
+
+        if self.index is None:
+            self.index = faiss.IndexFlatL2(len(embedding))
+
         self.index.add(emb)
         self.vectors.append(emb)
         self.metadata.append({"question": question, "answer": answer})
 
-    def append_pair(self, question: str, answer: str):
-        """Save new Q&A pair into JSON and FAISS."""
-        pairs = self._read_json()
-        pairs.append({"question": question, "answer": answer})
-        self._write_json(pairs)
-        self._add_to_chroma(len(pairs) - 1, question, answer)
-
     def reindex_from_json(self):
-        """Rebuild FAISS index from stored JSON Q&A."""
-        pairs = self._read_json()
-        self.index = faiss.IndexFlatL2(EMBED_DIM)
+        """Rebuild FAISS index from JSON memory file."""
+        self.index = None
         self.vectors = []
         self.metadata = []
 
+        pairs = self._read_json()
         for idx, p in enumerate(pairs):
-            q, a = p.get("question", ""), p.get("answer", "")
-            self._add_to_chroma(idx, q, a)
+            q = p.get("question", "")
+            a = p.get("answer", "")
+            emb = p.get("embedding")
+            if emb is not None:
+                emb = np.array(emb, dtype="float32")
+            self._add_to_chroma(idx, q, a, emb)
 
-    def query_similar(self, query_text: str, n_results: int = 3) -> List[Dict[str, Any]]:
-        """Find most similar Q&A pairs using FAISS nearest neighbors."""
-        emb = np.array([_text_to_embedding(query_text)], dtype="float32")
+    def append_pair(self, question: str, answer: str):
+        """Append new Q/A pair and store embedding."""
+        doc_text = f"Q: {question}\nA: {answer}"
+        emb = _text_to_embedding(doc_text)
 
-        if self.index.ntotal == 0:
-            # If no data, fallback to last N Q&A from JSON
-            pairs = self._read_json()[-n_results:]
-            return [
-                {
-                    "question": p.get("question"),
-                    "answer": p.get("answer"),
-                    "document": f"Q: {p.get('question')}\nA: {p.get('answer')}",
-                }
-                for p in reversed(pairs)
-            ]
+        pairs = self._read_json()
+        pairs.append({
+            "question": question,
+            "answer": answer,
+            "embedding": emb
+        })
+        self._write_json(pairs)
 
-        distances, indices = self.index.search(emb, n_results)
+        self._add_to_chroma(len(pairs) - 1, question, answer, emb)
+
+    def search(self, query: str, k: int = 3) -> List[Dict]:
+        """Search for most relevant past Q/A pairs."""
+        if self.index is None:
+            return []
+
+        query_emb = np.array([_text_to_embedding(query)], dtype="float32")
+        distances, indices = self.index.search(query_emb, min(k, len(self.metadata)))
+
         results = []
-        for dist, idx in zip(distances[0], indices[0]):
+        for i, idx in enumerate(indices[0]):
             if idx < len(self.metadata):
-                meta = self.metadata[idx]
-                results.append(
-                    {
-                        "document": f"Q: {meta['question']}\nA: {meta['answer']}",
-                        "question": meta["question"],
-                        "answer": meta["answer"],
-                        "distance": float(dist),
-                        "id": idx,
-                    }
-                )
+                results.append({
+                    "question": self.metadata[idx]["question"],
+                    "answer": self.metadata[idx]["answer"],
+                    "score": float(distances[0][i])
+                })
         return results

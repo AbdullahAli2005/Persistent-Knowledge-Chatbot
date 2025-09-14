@@ -4,19 +4,10 @@ from dotenv import load_dotenv
 from memory_manager import MemoryManager
 from typing import List, Optional
 from langchain.llms.base import LLM
-# from langchain.schema import LLMResult
-
-load_dotenv()
-
-# try:
-#     from langchain.llms.base import LLM
-#     from langchain.schema import LLMResult
-# except Exception:
-#     raise ImportError("langchain is required. Install it with `pip install langchain`.")    
 
 import google.generativeai as genai
 
-
+load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 if not GOOGLE_API_KEY:
     raise ValueError("Set GOOGLE_API_KEY in your .env file before running the app.")
@@ -32,49 +23,46 @@ class GeminiLLM(LLM):
 
     def _call(self, prompt: str, stop: Optional[List[str]] = None) -> str:
         try:
-            response = genai.GenerativeModel(self.model).generate_content(
-                prompt  
-            )
+            response = genai.GenerativeModel(self.model).generate_content(prompt)
             return response.text
         except Exception as e:
             return f"Error from Gemini API: {e}"
 
-    
-# UI
 st.set_page_config(page_title="Persistent Knowledge Base Chatbot", page_icon="🤖", layout="wide")
-st.title("🤖 Persistent Knowledge Base Chatbot")           
+st.title("🤖 Persistent Knowledge Base Chatbot")
 
-with st.spinner("Initializing memory and Chroma..."):
+with st.spinner("Initializing memory and FAISS..."):
     mem = MemoryManager()
-    
-# Sidebar: show chat history and controls
+
+# Sidebar: show chat history
 st.sidebar.header("Chat Memory")
 history = mem._read_json()
 if history:
-    for i, pair in enumerate(history[::-1]):  # show newest first
+    for i, pair in enumerate(history[::-1]):  # newest first
         st.sidebar.markdown(f"**Q:** {pair['question']}")
         st.sidebar.markdown(f"**A:** {pair['answer']}")
         st.sidebar.markdown("---")
 else:
     st.sidebar.info("No chat memory yet. Ask a question to start!")
-    
-st.header("Ask anything (Gemini-powered)")
 
+# Main area
+st.header("Ask anything (Gemini-powered)")
 query = st.text_area("Your question", height=120, placeholder="Type your question here...")
 
 col1, col2 = st.columns([1, 1])
 with col1:
     btn = st.button("Send")
 with col2:
-    clear = st.button("Clear chat memory (delete JSON & chroma index)")
+    clear = st.button("Clear chat memory (delete JSON & FAISS index)")
 
+# Clear memory
 if clear:
-    # clear JSON file and reset chroma collection
     mem._write_json([])
     mem.reindex_from_json()
-    
+
+# Process query
 if btn and query:
-    context = mem.query_similar(query, n_results=3)
+    context = mem.search(query, k=3)
     context_parts = []
     for c in context:
         q = c.get("question") or ""
@@ -82,17 +70,17 @@ if btn and query:
         if q and a:
             context_parts.append(f"Q: {q}\nA: {a}")
     context_text = "\n\n".join(context_parts)
-    
+
     system_instruction = (
         "You are a helpful assistant. Use any provided chat history context (previous Q/A pairs) "
         "to help answer the user's question. If no context is helpful, answer based on your knowledge."
     )
-    
+
     prompt = system_instruction + "\n\n"
     if context_text:
         prompt += "Relevant chat memory (previous Q/A pairs):\n" + context_text + "\n\n"
     prompt += "User question:\n" + query + "\n\nAnswer:"
-    
+
     llm = GeminiLLM()
     with st.spinner("Generating answer from Gemini..."):
         try:
@@ -100,14 +88,14 @@ if btn and query:
         except Exception as e:
             st.error("Error calling Gemini LLM: " + str(e))
             answer = "Error generating answer."
-            
+
     mem.append_pair(query, answer)
-    
+
     st.markdown("### Answer")
     st.write(answer)
 
     st.markdown("---")
-    st.markdown("### Used context (top results from index)")
+    st.markdown("### Used context (top results from memory)")
     if context_parts:
         for i, c in enumerate(context_parts):
             st.markdown(f"**Context #{i+1}**")
