@@ -8,6 +8,7 @@ from langchain.llms.base import LLM
 import google.generativeai as genai
 
 load_dotenv()
+
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 if not GOOGLE_API_KEY:
     raise ValueError("Set GOOGLE_API_KEY in your .env file before running the app.")
@@ -34,18 +35,16 @@ st.title("🤖 Persistent Knowledge Base Chatbot")
 with st.spinner("Initializing memory and FAISS..."):
     mem = MemoryManager()
 
-# Sidebar: show chat history
 st.sidebar.header("Chat Memory")
 history = mem._read_json()
 if history:
-    for i, pair in enumerate(history[::-1]):  # newest first
+    for i, pair in enumerate(history[::-1]):
         st.sidebar.markdown(f"**Q:** {pair['question']}")
         st.sidebar.markdown(f"**A:** {pair['answer']}")
         st.sidebar.markdown("---")
 else:
     st.sidebar.info("No chat memory yet. Ask a question to start!")
 
-# Main area
 st.header("Ask anything (Gemini-powered)")
 query = st.text_area("Your question", height=120, placeholder="Type your question here...")
 
@@ -55,12 +54,10 @@ with col1:
 with col2:
     clear = st.button("Clear chat memory (delete JSON & FAISS index)")
 
-# Clear memory
 if clear:
     mem._write_json([])
     mem.reindex_from_json()
 
-# Process query
 if btn and query:
     context = mem.search(query, k=3)
     context_parts = []
