@@ -3,14 +3,16 @@ import streamlit as st
 from dotenv import load_dotenv
 from memory_manager import MemoryManager
 from typing import List, Optional
+from langchain.llms.base import LLM
+from langchain.schema import LLMResult
 
 load_dotenv()
 
-try:
-    from langchain.llms.base import LLM
-    from langchain.schema import LLMResult
-except Exception:
-    raise ImportError("langchain is required. Install it with `pip install langchain`.")    
+# try:
+#     from langchain.llms.base import LLM
+#     from langchain.schema import LLMResult
+# except Exception:
+#     raise ImportError("langchain is required. Install it with `pip install langchain`.")    
 
 import google.generativeai as genai
 
