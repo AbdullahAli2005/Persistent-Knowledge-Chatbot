@@ -33,7 +33,7 @@ class GeminiLLM(LLM):
     def _call(self, prompt: str, stop: Optional[List[str]] = None) -> str:
         try:
             response = genai.GenerativeModel(self.model).generate_content(
-                prompt  # ❌ don’t add temperature here unless API supports it
+                prompt  
             )
             return response.text
         except Exception as e:
@@ -49,7 +49,7 @@ with st.spinner("Initializing memory and Chroma..."):
     
 # Sidebar: show chat history and controls
 st.sidebar.header("Chat Memory")
-history = mem.get_all_pairs()
+history = mem._read_json()
 if history:
     for i, pair in enumerate(history[::-1]):  # show newest first
         st.sidebar.markdown(f"**Q:** {pair['question']}")
