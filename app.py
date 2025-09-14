@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from memory_manager import MemoryManager
 from typing import List, Optional
 from langchain.llms.base import LLM
-from langchain.schema import LLMResult
+# from langchain.schema import LLMResult
 
 load_dotenv()
 
