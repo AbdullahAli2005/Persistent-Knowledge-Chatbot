@@ -3,16 +3,18 @@ import json
 import hashlib
 import math
 from typing import List, Dict, Any, Optional
+import chromadb
+from chromadb.utils import embedding_functions
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
-try:
-    import chromadb
-    from chromadb.utils import embedding_functions
-except Exception as e:
-    raise ImportError("ChromaDB is required for this module. Please install it via 'pip install chromadb'") from e
+# try:
+#     import chromadb
+#     from chromadb.utils import embedding_functions
+# except Exception as e:
+#     raise ImportError("ChromaDB is required for this module. Please install it via 'pip install chromadb'") from e
 
 # Config defaults
 DEFAULT_CHAT_MEMORY_PATH = os.getenv("CHAT_MEMORY_PATH", "data/chat_memory.json")
