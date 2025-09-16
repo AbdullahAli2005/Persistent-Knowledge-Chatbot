@@ -2,11 +2,12 @@ import os
 import streamlit as st
 from dotenv import load_dotenv
 from memory_manager import MemoryManager
+import google.generativeai as genai
 from typing import List, Optional
 from langchain.llms.base import LLM
+from pydantic import Field, PrivateAttr
 
-import google.generativeai as genai
-
+# Load env
 load_dotenv()
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
@@ -15,10 +16,16 @@ if not GOOGLE_API_KEY:
 
 genai.configure(api_key=GOOGLE_API_KEY)
 
-from pydantic import PrivateAttr
 
+# --- Fixed GeminiLLM ---
 class GeminiLLM(LLM):
-    _model: str = PrivateAttr(default="gemini-1.5-flash")
+    model: str = Field(default="gemini-1.5-flash", description="Gemini model name")
+    _client: genai.GenerativeModel = PrivateAttr()
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        # Initialize the Gemini client
+        self._client = genai.GenerativeModel(self.model)
 
     @property
     def _llm_type(self) -> str:
@@ -26,11 +33,13 @@ class GeminiLLM(LLM):
 
     def _call(self, prompt: str, stop=None):
         try:
-            response = genai.GenerativeModel(self._model).generate_content(prompt)
+            response = self._client.generate_content(prompt)
             return response.text
         except Exception as e:
             return f"Error from Gemini API: {e}"
 
+
+# --- Streamlit UI ---
 st.set_page_config(page_title="Persistent Knowledge Base Chatbot", page_icon="🤖", layout="wide")
 st.title("🤖 Persistent Knowledge Base Chatbot")
 
