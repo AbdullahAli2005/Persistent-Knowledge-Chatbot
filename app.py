@@ -27,7 +27,7 @@ class GeminiLLM:
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="Persistent Knowledge Base Chatbot", page_icon="🤖", layout="wide")
-st.title("🤖 Persistent Knowledge Base Chatbot")
+st.title("Persistent Knowledge Base Chatbot")
 
 # Initialize memory manager
 with st.spinner("Initializing memory and FAISS..."):
@@ -43,7 +43,7 @@ if history:
 else:
     st.sidebar.info("No chat memory yet. Ask a question to start!")
 
-st.header("Ask anything (Gemini-powered)")
+st.header("Ask anything")
 query = st.text_area("Your question", height=120, placeholder="Type your question here...")
 
 col1, col2 = st.columns([1, 1])
@@ -81,7 +81,7 @@ if btn and query:
         prompt += "Relevant chat memory (previous Q/A pairs):\n" + context_text + "\n\n"
     prompt += "User question:\n" + query + "\n\nAnswer:"
 
-    with st.spinner("Generating answer from Gemini..."):
+    with st.spinner("Generating..."):
         try:
             answer = llm(prompt)
         except Exception as e:
@@ -102,4 +102,4 @@ if btn and query:
     else:
         st.info("No relevant context found in memory.")
 else:
-    st.info("Type a question and press Send to receive an answer from Gemini.")
+    st.info("Type a question and press Send to receive an answer.")
