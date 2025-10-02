@@ -1,6 +1,11 @@
+# streamlit
+# langchain
+# faiss-cpu
+# google-generativeai
+# python-dotenv
+# pydantic<2.0
 streamlit
-langchain
-faiss-cpu
 google-generativeai
+faiss-cpu
 python-dotenv
-pydantic<2.0
+numpy
