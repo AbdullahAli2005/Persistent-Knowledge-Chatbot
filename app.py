@@ -250,7 +250,6 @@
 #         st.info("No relevant context found in memory.")
 # else:
 #     st.info("Type a question and press Send to receive an answer from Gemini.")
-
 import os
 import streamlit as st
 from dotenv import load_dotenv
@@ -272,6 +271,68 @@ try:
 except Exception as e:
     st.error(f"❌ Error configuring Gemini: {e}")
     st.stop()
+
+# Discover available models
+@st.cache_data
+def get_available_models():
+    """Get list of available models that support generateContent"""
+    try:
+        available_models = []
+        models = genai.list_models()
+        
+        for model in models:
+            # Check if model supports generateContent
+            if 'generateContent' in model.supported_generation_methods:
+                available_models.append(model.name)
+        
+        return available_models
+    except Exception as e:
+        st.error(f"Error listing models: {e}")
+        return []
+
+def get_gemini_response(prompt):
+    """Get response from Gemini using available models"""
+    try:
+        available_models = get_available_models()
+        
+        if not available_models:
+            return "Error: No available models found that support content generation"
+        
+        # Try models in order of preference
+        preferred_models = [
+            "gemini-1.5-flash-001",
+            "gemini-1.0-pro-001", 
+            "gemini-1.0-pro",
+            "models/gemini-pro"
+        ]
+        
+        # Filter to only available models
+        models_to_try = [model for model in preferred_models if model in available_models]
+        
+        # If none of our preferred models are available, use the first available one
+        if not models_to_try and available_models:
+            models_to_try = [available_models[0]]
+        
+        if not models_to_try:
+            return "Error: No suitable models available"
+        
+        # Try each model until one works
+        last_error = ""
+        for model_name in models_to_try:
+            try:
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(prompt)
+                if response.text:
+                    st.success(f"✅ Using model: {model_name}")
+                    return response.text
+            except Exception as e:
+                last_error = str(e)
+                continue
+        
+        return f"Error from Gemini: {last_error}"
+        
+    except Exception as e:
+        return f"Error: {str(e)}"
 
 # Simple memory management
 CHAT_MEMORY_PATH = "chat_memory.json"
@@ -295,24 +356,6 @@ def save_chat_memory(memory):
     except Exception as e:
         st.error(f"Error saving chat memory: {e}")
 
-def get_gemini_response(prompt):
-    """Get response from Gemini"""
-    try:
-        # Try different model names
-        try:
-            model = genai.GenerativeModel("gemini-pro")
-        except:
-            try:
-                model = genai.GenerativeModel("models/gemini-pro")
-            except:
-                st.error("No working Gemini model found")
-                return "Error: No working model"
-        
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        return f"Error from Gemini: {str(e)}"
-
 # Streamlit UI
 st.set_page_config(
     page_title="Persistent Knowledge Chatbot",
@@ -322,6 +365,19 @@ st.set_page_config(
 
 st.title("🤖 Persistent Knowledge Chatbot")
 st.markdown("---")
+
+# Display available models for debugging
+try:
+    available_models = get_available_models()
+    with st.expander("🔧 Debug Info - Available Models"):
+        if available_models:
+            st.write("Models supporting generateContent:")
+            for model in available_models:
+                st.write(f"- {model}")
+        else:
+            st.write("No models found or error fetching models")
+except Exception as e:
+    st.error(f"Error getting model info: {e}")
 
 # Initialize session state
 if 'memory' not in st.session_state:
@@ -387,7 +443,7 @@ Please provide a helpful and accurate response:"""
         answer = get_gemini_response(prompt)
         
         # Save to memory
-        if not answer.startswith("Error from Gemini"):
+        if not answer.startswith("Error"):
             new_chat = {
                 "question": question,
                 "answer": answer
