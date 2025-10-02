@@ -18,14 +18,36 @@ genai.configure(api_key=GOOGLE_API_KEY)
 
 
 # --- Fixed GeminiLLM ---
+# class GeminiLLM(LLM):
+    # model: str = Field(default="gemini-1.5-flash", description="Gemini model name")
+    # _client: genai.GenerativeModel = PrivateAttr()
+
+    # def __init__(self, **data):
+    #     super().__init__(**data)
+    #     # Initialize the Gemini client
+    #     self._client = genai.GenerativeModel(self.model)
+
+    # @property
+    # def _llm_type(self) -> str:
+    #     return "gemini-llm"
+
+    # def _call(self, prompt: str, stop=None):
+    #     try:
+    #         response = self._client.generate_content(prompt)
+    #         return response.text
+    #     except Exception as e:
+    #         return f"Error from Gemini API: {e}"
+
 class GeminiLLM(LLM):
     model: str = Field(default="gemini-1.5-flash", description="Gemini model name")
     _client: genai.GenerativeModel = PrivateAttr()
 
     def __init__(self, **data):
         super().__init__(**data)
-        # Initialize the Gemini client
-        self._client = genai.GenerativeModel(self.model)
+        try:
+            self._client = genai.GenerativeModel(self.model)
+        except Exception as e:
+            raise RuntimeError(f"Failed to init Gemini model {self.model}: {e}")
 
     @property
     def _llm_type(self) -> str:
@@ -34,7 +56,15 @@ class GeminiLLM(LLM):
     def _call(self, prompt: str, stop=None):
         try:
             response = self._client.generate_content(prompt)
-            return response.text
+
+            # Gemini returns candidates, not always response.text
+            if hasattr(response, "text"):
+                return response.text
+            elif hasattr(response, "candidates"):
+                return response.candidates[0].content.parts[0].text
+            else:
+                return str(response)
+
         except Exception as e:
             return f"Error from Gemini API: {e}"
 
